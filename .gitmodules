@@ -1,0 +1,6 @@
+[submodule "premake"]
+	path = premake
+	url = https://github.com/rainerzufalldererste/premakeBuild.git
+[submodule "swapcodec/3rdParty/mango/repo"]
+	path = swapcodec/3rdParty/mango/repo
+	url = https://github.com/t0rakka/mango.git
