@@ -97,20 +97,24 @@ swapcodec::swapEncoder::~swapEncoder()
     delete (mango::ConcurrentQueue *)pThreadPool;
 }
 
+void testDCT(uint8_t *, size_t, size_t);
+
 swapResult swapcodec::swapEncoder::AddFrameYUV420(IN_OUT uint8_t *pFrameData)
 {
-  swapResult result = sR_Success;
-
-  if (sR_Success != (result = swapEncodeFrameYUV420(pFrameData, pCompressibleData, resX, resY, (mango::ConcurrentQueue *)pThreadPool)))
-    goto epilogue;
-
-  //swapMemcpy(pFrameData, pCompressibleData, resX * resY * 3 / 2);
-
-  if (sR_Success != (result = swapDecodeFrameYUV420(pCompressibleData, pFrameData, resX, resY, (mango::ConcurrentQueue *)pThreadPool)))
-    goto epilogue;
-
-epilogue:
-  return result;
+  testDCT(pFrameData, resX, resY);
+  return sR_Success;
+  //  swapResult result = sR_Success;
+  //
+  //  if (sR_Success != (result = swapEncodeFrameYUV420(pFrameData, pCompressibleData, resX, resY, (mango::ConcurrentQueue *)pThreadPool)))
+  //    goto epilogue;
+  //
+  //  //swapMemcpy(pFrameData, pCompressibleData, resX * resY * 3 / 2);
+  //
+  //  if (sR_Success != (result = swapDecodeFrameYUV420(pCompressibleData, pFrameData, resX, resY, (mango::ConcurrentQueue *)pThreadPool)))
+  //    goto epilogue;
+  //
+  //epilogue:
+  //  return result;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -487,6 +491,52 @@ void idct_sse2(uint8_t* dest, int stride, const int16_t* src, const uint16_t* qt
   _mm_storeu_si128(d + 3, s3);
 }
 
+#define xadd3(xa,xb,xc,xd,h) p=xa+xb, n=xa-xb, xa=p+xc+h, xb=n+xd+h, xc=p-xc+h, xd=n-xd+h // triple-butterfly-add (and possible rounding)
+#define xmul(xa,xb,k1,k2,sh) n=k1*(xa+xb), p=xa, xa=(n+(k2-k1)*xb)>>sh, xb=(n-(k2+k1)*p)>>sh // butterfly-mul equ.(2) 
+
+static void idct1(int *x, int *y, int ps, int half) // 1D-IDCT
+{
+  int p, n;
+  x[0] <<= 9, x[1] <<= 7, x[3] *= 181, x[4] <<= 9, x[5] *= 181, x[7] <<= 7;
+  xmul(x[6], x[2], 277, 669, 0);
+  xadd3(x[0], x[4], x[6], x[2], half);
+  xadd3(x[1], x[7], x[3], x[5], 0);
+  xmul(x[5], x[3], 251, 50, 6);
+  xmul(x[1], x[7], 213, 142, 6);
+  y[0 * 8] = (x[0] + x[1]) >> ps;
+  y[1 * 8] = (x[4] + x[5]) >> ps;
+  y[2 * 8] = (x[2] + x[3]) >> ps;
+  y[3 * 8] = (x[6] + x[7]) >> ps;
+  y[4 * 8] = (x[6] - x[7]) >> ps;
+  y[5 * 8] = (x[2] - x[3]) >> ps;
+  y[6 * 8] = (x[4] - x[5]) >> ps;
+  y[7 * 8] = (x[0] - x[1]) >> ps;
+}
+
+void idct(int *b) // 2D 8x8 IDCT
+{
+  int i, b2[64];
+  for (i = 0; i < 8; i++) idct1(b + i * 8, b2 + i, 9, 1 << 8); // row
+  for (i = 0; i < 8; i++) idct1(b2 + i * 8, b + i, 12, 1 << 11); // col 
+}
+
+void putIdct(uint8_t *pImage, size_t stride, uint8_t *pEncoded, uint16_t *pQt)
+{
+  int encoded[64] = { 0 };
+  for (size_t i = 0; i < 64; i++)
+    encoded[i] = pEncoded[i] * pQt[i];
+  
+  idct(encoded);
+
+  for (size_t y = 0; y < 8; y++)
+  {
+    for (size_t x = 0; x < 8; x++)
+    {
+      pImage[y + x * stride] = (uint8_t)encoded[x + y * 8];
+    }
+  }
+}
+
 //////////////////////////////////////////////////////////////////////////
 
 swapResult swapEncodeFrameYUV420(IN uint8_t * pImage, OUT uint8_t * pUncompressedData, const size_t resX, const size_t resY, mango::ConcurrentQueue *pQueue)
@@ -543,11 +593,66 @@ swapResult swapDecodeFrameYUV420(IN uint8_t * pUncompressedData, OUT uint8_t * p
   {
     pQueue->enqueue([&, blockY, blockX, y, resX, pUncompressedData, pImage] {
       for (size_t x = 0; x < blockX; x++)
-        idct_sse2(pImage + ((y * blockX + x) << 6), (int)resX, (int16_t *)(pUncompressedData + (y * blockY + x) * DCT_PER_BLOCK_SIZE), (uint16_t *)Lqt);
+        putIdct(pImage + ((y << 3) * (blockX << 3) + (x << 3)), resX, pUncompressedData + (y * blockY + x) * 64, ILqt);
+        //idct_sse2(pImage + ((y * blockX + x) << 6), (int)resX, (int16_t *)(pUncompressedData + (y * blockY + x) * DCT_PER_BLOCK_SIZE), (uint16_t *)Lqt);
     });
   }
 
   pQueue->wait();
 
   return result;
+}
+
+template <typename T>
+void printImg(T *pI)
+{
+  size_t k = 0;
+  for (size_t i = 0; i < 8; i++)
+  {
+    for (size_t j = 0; j < 8; j++)
+      printf("%3i ", (int)pI[k++]);
+    printf("\n");
+  }
+  printf("================================\n");
+}
+
+void testDCT(IN uint8_t *, const size_t, const size_t)
+{
+  uint8_t Lqt[64];
+  uint8_t Cqt[64];
+  uint16_t ILqt[64];
+  uint16_t ICqt[64];
+  uint32_t quality = 75;
+
+  swapInitDctQuantizationTables(quality, Lqt, Cqt, ILqt, ICqt);
+
+  printImg(ICqt);
+
+  uint16_t img[64] = 
+    { 255, 255, 255, 255, 255, 255, 255, 255,
+      1, 1, 1, 1, 255, 255, 255, 255,
+      2, 2, 2, 2, 255, 255, 255, 255,
+      3, 3, 3, 3, 255, 255, 255, 255,
+      4, 4, 4, 4, 255, 255, 1, 1,
+      5, 5, 5, 5, 255, 255, 1, 1,
+      6, 6, 6, 6, 255, 255, 1, 1,
+      7, 7, 7, 7, 255, 255, 255, 255 };
+
+  printImg(img);
+
+  int16_t enc[64];
+
+  slapDCT(enc, (int16_t *)img, (uint16_t *)ILqt);
+
+  printImg(enc);
+
+  //putIdct(img, 8, enc, ILqt);
+  int e[64];
+  for (size_t i = 0; i < 64; i++)
+    e[i] = (enc[i] * ILqt[i]) >> 7;
+  idct(e);
+  //uint8_t q[64];
+  //idct_sse2(q, 16, enc, (uint16_t *)ILqt);
+
+  printImg(e);
 }
