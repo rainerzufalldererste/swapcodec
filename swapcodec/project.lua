@@ -1,4 +1,4 @@
-ProjectName = "slapcodec"
+ProjectName = "swapcodec"
 project(ProjectName)
 
   --Settings
@@ -9,6 +9,7 @@ project(ProjectName)
   buildoptions { '/Gm-' }
   buildoptions { '/MP' }
   linkoptions { '/ignore:4006' } -- ignore multiple libraries defining the same symbol
+  linkoptions { '/ignore:4324' } -- ignore alignas warnings
 
   ignoredefaultlibraries { "msvcrt" }
   

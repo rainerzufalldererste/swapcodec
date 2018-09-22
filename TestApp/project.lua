@@ -26,9 +26,9 @@ project(ProjectName)
   includedirs { "../swapcodec/include" }
 
   filter { "configurations:Release" }
-    links { "../swapcodec/lib/slapcodec.lib" }
+    links { "../swapcodec/lib/swapcodec.lib" }
   filter { "configurations:Debug" }
-    links { "../swapcodec/lib/slapcodecD.lib" }
+    links { "../swapcodec/lib/swapcodecD.lib" }
   
   filter { }
   
